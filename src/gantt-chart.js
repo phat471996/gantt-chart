@@ -16,8 +16,9 @@ var ganttChart = function(conf) {
         enableItemResize: enableItemResize,
         enableTooltip: enableTooltip,
         enableZoom: enableZoom,
+        attachEvent: attachEvent,
         chart: function() { return main },
-        drag: function() { return drag },
+        // drag: function() { return drag },
         items: items,
         lanes: lanes,
         margin: margin,
@@ -50,6 +51,10 @@ var ganttChart = function(conf) {
     self.isShowXGrid = true;
     self.isShowYGrid = true;
     self.isShowLaneLabel = true;
+
+    self.startDrag = [dragstart];
+    self.moveDrag = [dragmove];
+    self.endDrag = [dragend];
 
     self.height = null;
     self.width = null;
@@ -96,6 +101,20 @@ var ganttChart = function(conf) {
         return api;
     }
 
+    function attachEvent(event, callback) {
+        switch(event) {
+            case "startDrag":
+                self.startDrag.push(callback);
+                break;
+            case "moveDrag":
+                self.moveDrag.push(callback);         
+                break;
+            case "endDrag":
+                self.endDrag.push(callback);                
+                break;
+        }
+    }
+
     function build() {
         var laneLength = self.lanes.length,
             marginWidth = getMarginWidth(),
@@ -113,10 +132,22 @@ var ganttChart = function(conf) {
             .attr("width", marginWidth)
             .attr("height", marginHeight);
 
-        drag = d3.behavior.drag()
-            .on("dragstart", dragstart)
-            .on("drag", dragmove)
-            .on("dragend", dragend);
+            drag = d3.behavior.drag()
+                .on("dragstart", function(d) {
+                    for(let i = 0; i < self.startDrag.length; i++) {
+                        self.startDrag[i](this, d);
+                    }
+                })
+                .on("drag", function(d) {
+                    for(let i = 0; i < self.moveDrag.length; i++) {
+                        self.moveDrag[i](this, d);
+                    }
+                } )
+                .on("dragend", function(d) {
+                    for(let i = 0; i < self.endDrag.length; i++) {
+                        self.endDrag[i](this, d);
+                    }
+                });
 
         main = chart.append("g")
             .attr("transform", "translate(" + self.margin.left + "," + self.margin.top + ")")
@@ -188,35 +219,35 @@ var ganttChart = function(conf) {
         }
     }
 
-    function dragmove() {
-        var x = parseFloat(d3.select(this).attr("x")),
-            y = parseFloat(d3.select(this).attr("y")),
-            width = parseFloat(d3.select(this).attr("width")),
+    function dragmove(thisEl) {
+        var x = parseFloat(d3.select(thisEl).attr("x")),
+            y = parseFloat(d3.select(thisEl).attr("y")),
+            width = parseFloat(d3.select(thisEl).attr("width")),
             x1 = x + width;
 
         if (self.isEnableItemResize) {
             if (x + resizeRectMargin >= d3.event.x && x <= x1 - resizeRectMargin) {
-                d3.select(this)
+                d3.select(thisEl)
                     .attr("x", x + d3.event.dx)
                     .attr("width", width - d3.event.dx);
                 return;
             }
             if (x1 - resizeRectMargin <= d3.event.x && x + 5 <= x1) {
-                d3.select(this)
+                d3.select(thisEl)
                     .attr("width", width + d3.event.dx);
                 return;
             }
         }
         if (self.isEnableDrag) {
-            d3.select(this)
+            d3.select(thisEl)
                 .attr("x", x + d3.event.dx)
                 .attr("y", y + d3.event.dy);
         }
     }
 
-    function dragend(d) {
+    function dragend(thisEl, d) {
         if (!self.isEnableDrag && !self.isEnableItemResize) return;
-        var el = d3.select(this),
+        var el = d3.select(thisEl),
             lane = Math.round(yScale.invert(el.attr("y"))),
             start = el.attr("x");
 
@@ -368,29 +399,49 @@ var ganttChart = function(conf) {
 
     function redraw() {
         var itemHeight = getMarginHeight() / (self.lanes.length || 1) / (self.sublanes || 1),
-            rects;
+        rects;
 
-        rects = itemRects.selectAll("rect")
-            .data(self.items)
-            .attr("x", function (d) { return xScale(d.start); })
-            .attr("y", function (d) {
-                return (self.sublanes < 2) ? yScale(d.lane) : yScale(d.lane) + d.sublane*itemHeight;
-            })
-            .attr("width", function (d) { return xScale(d.end) - xScale(d.start); })
-            .attr("height", itemHeight)
-            .attr("class", function (d) { return d.class + ' main'; })
-            .attr("opacity", .75)
-            .call(drag)
-            .on("click", (self.isEnableTooltip) ? showTooltip : null)
-            .on("mousemove", changeCursor)
+    rects = itemRects.selectAll("rect")
+        .data(self.items)
+        .attr("x", function (d) { return xScale(d.start); })
+        .attr("y", function (d) {
+            return (self.sublanes < 2) ? yScale(d.lane) : yScale(d.lane) + d.sublane*itemHeight;
+        })
+        .attr("width", function (d) { return xScale(d.end) - xScale(d.start); })
+        .attr("height", itemHeight)
+        .attr("class", function (d) { return d.class + ' main'; })
+        .attr("opacity", .75)
+        .call(drag)
+        .on("mouseover", (self.isEnableTooltip) ? showTooltip : null)
+        .on("mouseleave", (self.isEnableTooltip) ? hideTooltip : null)
+        .on("mousemove", changeCursor)
 
-        rects.enter().append("rect");
-        rects.exit().remove();
+    let texts = itemRects.selectAll("text")
+    .data(self.items)
+    .text(function(d){
+     return d.id;
+    })
+    .attr("x", function(d){ return (xScale(d.end) - xScale(d.start)) / 2; })
+    .attr("y",function (d) {
+        return itemHeight/2;
+    })
+    .attr("font-size", 11)
+    .attr("text-anchor", "middle")
+    .attr("text-height", 20)
+    .attr("fill", "#fff");
 
-        main.select('g.main.axis.date').call(xAxis);
-        main.select('g.main.axis.lane').call(yAxis);
+    rects.enter().append("rect");
+    rects.exit().remove();
 
-        hideTooltip();
+    
+    texts.enter().append("text");
+    texts.exit().remove();
+
+
+    main.select('g.main.axis.date').call(xAxis);
+    main.select('g.main.axis.lane').call(yAxis);
+
+    hideTooltip();
     }
 
     function resize() {
