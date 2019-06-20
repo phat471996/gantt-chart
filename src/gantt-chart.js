@@ -1,7 +1,7 @@
 'use strict';
 
-var ganttChart = function(conf) {
-    var api,
+let ganttChart = function(conf) {
+    let api,
         self = {},
         toStr = Object.prototype.toString,
         astr = "[object Array]",
@@ -27,6 +27,8 @@ var ganttChart = function(conf) {
         showYGrid: showYGrid,
         size: size,
         sublanes: sublanes,
+        laneItems: function() {return self.laneItems},
+        getItemsByLane: getItemsByLane,
         svg: function() { return chart },
         redraw: redraw,
         renderTo: function() { return self.renderTo },
@@ -42,6 +44,7 @@ var ganttChart = function(conf) {
     self.lanes = null;
     self.renderTo = '#gantt_chart';
     self.sublanes = 1;
+    self.laneItems = {};
 
     self.isAutoResize = true;
     self.isEnableDrag = true;
@@ -52,9 +55,9 @@ var ganttChart = function(conf) {
     self.isShowYGrid = true;
     self.isShowLaneLabel = true;
 
-    self.startDrag = [dragstart];
-    self.moveDrag = [dragmove];
-    self.endDrag = [dragend];
+    self.startDrag = [];
+    self.moveDrag = [];
+    self.endDrag = [];
 
     self.height = null;
     self.width = null;
@@ -75,6 +78,7 @@ var ganttChart = function(conf) {
         if (self.height === null) self.height = parseInt(d3.select(self.renderTo).style('height')) || 480;
         if (self.width === null) self.width = parseInt(d3.select(self.renderTo).style('width')) || 640;
 
+        groupItemToLane(self.items);
         build();
         autoresize(self.isAutoResize);
         enableDrag(self.isEnableDrag);
@@ -87,7 +91,7 @@ var ganttChart = function(conf) {
     })();
 
     function addItems(newItems) {
-        var itemsType = toStr.call(newItems);
+        let itemsType = toStr.call(newItems);
         if (itemsType !== astr && itemsType !== ostr) throwError('Expected object or array. Got: ' + itemsType);
         (itemsType === astr) ? self.items = self.items.concat(newItems) : self.items.push(newItems);
         onItemsChange();
@@ -113,10 +117,11 @@ var ganttChart = function(conf) {
                 self.endDrag.push(callback);                
                 break;
         }
+        return api;
     }
 
     function build() {
-        var laneLength = self.lanes.length,
+        let laneLength = self.lanes.length,
             marginWidth = getMarginWidth(),
             marginHeight = getMarginHeight();
 
@@ -132,22 +137,25 @@ var ganttChart = function(conf) {
             .attr("width", marginWidth)
             .attr("height", marginHeight);
 
-            drag = d3.behavior.drag()
-                .on("dragstart", function(d) {
-                    for(let i = 0; i < self.startDrag.length; i++) {
-                        self.startDrag[i](this, d);
-                    }
-                })
-                .on("drag", function(d) {
-                    for(let i = 0; i < self.moveDrag.length; i++) {
-                        self.moveDrag[i](this, d);
-                    }
-                } )
-                .on("dragend", function(d) {
-                    for(let i = 0; i < self.endDrag.length; i++) {
-                        self.endDrag[i](this, d);
-                    }
-                });
+        drag = d3.behavior.drag()
+            .on("dragstart", function(d) {
+                dragstart(this, d);
+                for(let i = 0; i < self.startDrag.length; i++) {
+                    self.startDrag[i](this, d);
+                }
+            })
+            .on("drag", function(d) {
+                dragmove(this, d);
+                for(let i = 0; i < self.moveDrag.length; i++) {
+                    self.moveDrag[i](this, d);
+                }
+            } )
+            .on("dragend", function(d) {
+                dragend(this, d);                    
+                for(let i = 0; i < self.endDrag.length; i++) {
+                    self.endDrag[i](this, d);
+                }
+            });
 
         main = chart.append("g")
             .attr("transform", "translate(" + self.margin.left + "," + self.margin.top + ")")
@@ -207,7 +215,7 @@ var ganttChart = function(conf) {
     }
 
     function changeCursor(d) {
-        var x = parseFloat(d3.select(this).attr("x")),
+        let x = parseFloat(d3.select(this).attr("x")),
             width = parseFloat(d3.select(this).attr("width")),
             x1 = x + width;
 
@@ -219,38 +227,52 @@ var ganttChart = function(conf) {
         }
     }
 
-    function dragmove(thisEl) {
-        var x = parseFloat(d3.select(thisEl).attr("x")),
+    function dragmove(thisEl, d) {
+        let x = parseFloat(d3.select(thisEl).attr("x")),
             y = parseFloat(d3.select(thisEl).attr("y")),
             width = parseFloat(d3.select(thisEl).attr("width")),
-            x1 = x + width;
+            x1 = x + width,
+            id = d3.select(thisEl).attr("id"),
+            xText =  parseFloat(d3.select("#text-" + id).attr("x")),
+            itemHeight =  getItemHeight();
 
-        if (self.isEnableItemResize) {
+        if (self.isEnableItemResize && d.isResize) {
             if (x + resizeRectMargin >= d3.event.x && x <= x1 - resizeRectMargin) {
                 d3.select(thisEl)
                     .attr("x", x + d3.event.dx)
                     .attr("width", width - d3.event.dx);
+                d3.select("#text-" + id)
+                    .attr("x", x + (width + d3.event.dx) / 2)
+                    .attr("width", (width + d3.event.dx) / 2);
                 return;
             }
             if (x1 - resizeRectMargin <= d3.event.x && x + 5 <= x1) {
                 d3.select(thisEl)
                     .attr("width", width + d3.event.dx);
+                d3.select("#text-" + id)
+                    .attr("x", x + (width + d3.event.dx) / 2)
+                    .attr("width", (width + d3.event.dx) / 2);
                 return;
             }
         }
-        if (self.isEnableDrag) {
+        if (self.isEnableDrag && d.isMove) {
             d3.select(thisEl)
                 .attr("x", x + d3.event.dx)
                 .attr("y", y + d3.event.dy);
+            d3.select("#text-" + id)
+                .attr("x", xText + d3.event.dx)
+                .attr("y", (y + itemHeight/2) + d3.event.dy);
         }
     }
 
     function dragend(thisEl, d) {
         if (!self.isEnableDrag && !self.isEnableItemResize) return;
-        var el = d3.select(thisEl),
+        let el = d3.select(thisEl),
             lane = Math.round(yScale.invert(el.attr("y"))),
-            start = el.attr("x");
-
+            start = el.attr("x"),
+            id = el.attr("id"),
+            itemHeight = getItemHeight();
+            
         if (lane >= self.lanes.length) {
             lane = self.lanes.length - 1;
         }
@@ -258,19 +280,35 @@ var ganttChart = function(conf) {
             lane = 0;
         }
 
+        delete d.isResize;
+        delete d.isMove;
+
         el.attr("y", yScale(lane));
+        d3.select("#text-" + id).attr("y", yScale(lane) + itemHeight/2);
+
         d.lane = lane;
         d.start = Date.parse(xScale.invert(start));
         d.end = Date.parse(xScale.invert(parseFloat(el.attr("width")) + parseFloat(start)));
+        
+        groupItemToLane(self.items);
+
+        redraw();
     }
 
-    function dragstart() {
+    function dragstart(thisEl, d) {
         if (!self.isEnableDrag && !self.isEnableItemResize) return;
+        let cursor = d3.select(thisEl).attr("class");
+        if(cursor.includes("cursor-resize")) {
+            d.isResize = true
+        }
+        else if(cursor.includes("cursor-move")) {
+            d.isMove = true
+        }
         d3.event.sourceEvent.stopPropagation();
     }
 
     function copySameProp(copyTo, copyFrom) {
-        var p;
+        let p;
 
         for (p in copyFrom) {
             if (copyTo.hasOwnProperty(p)) {
@@ -339,7 +377,7 @@ var ganttChart = function(conf) {
     }
 
     function items(newItems) {
-        var itemsType = toStr.call(newItems);
+        let itemsType = toStr.call(newItems);
 
         if (!arguments.length) return self.items;
         if (itemsType !== astr) throwError('Expected array. Got: ' + itemsType);
@@ -350,7 +388,7 @@ var ganttChart = function(conf) {
     }
 
     function lanes(newLanes) {
-        var lanesType = toStr.call(newLanes);
+        let lanesType = toStr.call(newLanes);
         if (!arguments.length) return self.lanes;
         if (lanesType !== astr) throwError('Expected array. Got: ' + lanesType);
         self.lanes = newLanes;
@@ -361,7 +399,7 @@ var ganttChart = function(conf) {
     }
 
     function margin(newMargin) {
-        var msg = " margin value is incorrect. All values should be numbers";
+        let msg = " margin value is incorrect. All values should be numbers";
         if (!arguments.length) return self.margin;
         if (newMargin.top !== undefined) {
             if (isNaN(newMargin.top)) throwError("'Top'" + msg);
@@ -387,7 +425,7 @@ var ganttChart = function(conf) {
     }
 
     function onItemsChange() {
-        var laneLength = getLaneLength();
+        let laneLength = getLaneLength();
         self.lanes.length = laneLength;
         xScale.domain(getTimeDomain());
         yAxis.ticks(laneLength);
@@ -398,50 +436,51 @@ var ganttChart = function(conf) {
     }
 
     function redraw() {
-        var itemHeight = getMarginHeight() / (self.lanes.length || 1) / (self.sublanes || 1),
-        rects;
+        let itemHeight =  getItemHeight(),
+            rects;
 
-    rects = itemRects.selectAll("rect")
-        .data(self.items)
-        .attr("x", function (d) { return xScale(d.start); })
-        .attr("y", function (d) {
-            return (self.sublanes < 2) ? yScale(d.lane) : yScale(d.lane) + d.sublane*itemHeight;
-        })
-        .attr("width", function (d) { return xScale(d.end) - xScale(d.start); })
-        .attr("height", itemHeight)
-        .attr("class", function (d) { return d.class + ' main'; })
-        .attr("opacity", .75)
-        .call(drag)
-        .on("mouseover", (self.isEnableTooltip) ? showTooltip : null)
-        .on("mouseleave", (self.isEnableTooltip) ? hideTooltip : null)
-        .on("mousemove", changeCursor)
+        rects = itemRects.selectAll("rect")
+            .data(self.items)
+            .attr("id", function(d) { return d.id })
+            .attr("x", function (d) { return xScale(d.start); })
+            .attr("y", function (d) {
+                return (self.sublanes < 2) ? yScale(d.lane) : yScale(d.lane) + d.sublane*itemHeight;
+            })
+            .attr("width", function (d) { return xScale(d.end) - xScale(d.start); })
+            .attr("height", itemHeight)
+            .attr("class", function (d) { return d.class + ' main'; })
+            .attr("opacity", .75)
+            .call(drag)
+            .on("mouseover", (self.isEnableTooltip) ? showTooltip : null)
+            .on("mouseleave", (self.isEnableTooltip) ? hideTooltip : null)
+            .on("mousemove", changeCursor);
 
-    let texts = itemRects.selectAll("text")
-    .data(self.items)
-    .text(function(d){
-     return d.id;
-    })
-    .attr("x", function(d){ return (xScale(d.end) - xScale(d.start)) / 2; })
-    .attr("y",function (d) {
-        return itemHeight/2;
-    })
-    .attr("font-size", 11)
-    .attr("text-anchor", "middle")
-    .attr("text-height", 20)
-    .attr("fill", "#fff");
+        rects.enter().append("rect");
+        rects.exit().remove();
 
-    rects.enter().append("rect");
-    rects.exit().remove();
+        let texts = itemRects.selectAll("text")
+            .data(self.items)
+            .text(function(d){
+            return d.label;
+            })
+            .attr("id", function(d) { return "text-" + d.id })
+            .attr("x", function(d){ return xScale(d.start) + (xScale(d.end) - xScale(d.start)) / 2; })
+            .attr("y",function (d) {
+                return (self.sublanes < 2) ? yScale(d.lane) + itemHeight/2 : yScale(d.lane) + d.sublane*itemHeight + itemHeight/2;
+            })
+            .attr("font-size", 11)
+            .attr("text-anchor", "middle")
+            .attr("text-height", 20)
+            .attr("fill", "#fff");
 
-    
-    texts.enter().append("text");
-    texts.exit().remove();
+        texts.enter().append("text");
+        texts.exit().remove();
 
 
-    main.select('g.main.axis.date').call(xAxis);
-    main.select('g.main.axis.lane').call(yAxis);
+        main.select('g.main.axis.date').call(xAxis);
+        main.select('g.main.axis.lane').call(yAxis);
 
-    hideTooltip();
+        hideTooltip();
     }
 
     function resize() {
@@ -449,7 +488,7 @@ var ganttChart = function(conf) {
             self.width = parseInt(d3.select(self.renderTo).style('width'));
             self.height = parseInt(d3.select(self.renderTo).style('height'));
         }
-        var marginWidth = getMarginWidth(),
+        let marginWidth = getMarginWidth(),
             marginHeight = getMarginHeight();
 
         xScale.range([0, marginWidth]);
@@ -511,7 +550,7 @@ var ganttChart = function(conf) {
 
     function showXGrid(isShowXGrid) {
         if (!arguments.length) return self.isShowXGrid;
-        var height = (isShowXGrid !== false) ? -getMarginHeight() : -6;
+        let height = (isShowXGrid !== false) ? -getMarginHeight() : -6;
         xAxis.tickSize(height, 0, 0);
         self.isShowXGrid = isShowXGrid;
         main.select('g.main.axis.date').call(xAxis);
@@ -520,7 +559,7 @@ var ganttChart = function(conf) {
 
     function showYGrid(isShowYGrid) {
         if (!arguments.length) return self.isShowYGrid;
-        var width = (isShowYGrid !== false) ? -getMarginWidth() : -6;
+        let width = (isShowYGrid !== false) ? -getMarginWidth() : -6;
         yAxis.tickSize(width, 0, 0);
         self.isShowYGrid = isShowYGrid;
         main.select('g.main.axis.lane').call(yAxis);
@@ -543,6 +582,25 @@ var ganttChart = function(conf) {
         return api;
     }
 
+    function getItemHeight() {
+        return getMarginHeight() / (self.lanes.length || 1) / (self.sublanes || 1);
+    }
+
+    function groupItemToLane(items) {
+        self.laneItems = {};
+        for(let i = 0; i < items.length; i++) {
+            let item = items[i];
+            if(self.laneItems[item.lane] === undefined) {
+                self.laneItems[item.lane] = []
+            }
+            self.laneItems[item.lane].push(item);
+        }
+    }
+
+    function getItemsByLane(lane) {
+        return self.laneItems[lane];
+    }
+    
     function throwError(msg) {
         throw TypeError(msg);
     }
