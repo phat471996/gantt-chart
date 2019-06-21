@@ -291,7 +291,9 @@ let ganttChart = function(conf) {
         d.end = Date.parse(xScale.invert(parseFloat(el.attr("width")) + parseFloat(start)));
         
         groupItemToLane(self.items);
-
+        sublanes(2);
+        size(self.width, self.height + itemHeight*self.lanes.length)
+        d.sublane = 1;
         redraw();
     }
 
@@ -464,7 +466,7 @@ let ganttChart = function(conf) {
             return d.label;
             })
             .attr("id", function(d) { return "text-" + d.id })
-            .attr("x", function(d){ return xScale(d.start) + (xScale(d.end) - xScale(d.start)) / 2; })
+            .attr("x", function(d) { return xScale(d.start) + (xScale(d.end) - xScale(d.start)) / 2; })
             .attr("y",function (d) {
                 return (self.sublanes < 2) ? yScale(d.lane) + itemHeight/2 : yScale(d.lane) + d.sublane*itemHeight + itemHeight/2;
             })
@@ -475,8 +477,7 @@ let ganttChart = function(conf) {
 
         texts.enter().append("text");
         texts.exit().remove();
-
-
+        
         main.select('g.main.axis.date').call(xAxis);
         main.select('g.main.axis.lane').call(yAxis);
 
