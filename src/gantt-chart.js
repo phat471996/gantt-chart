@@ -6,6 +6,7 @@ var ganttChart = function(conf) {
         toStr = Object.prototype.toString,
         astr = "[object Array]",
         ostr = "[object Object]",
+        sstr = "[object String]",
         chart, drag, main, itemRects, tooltipDiv, xAxis, xScale, yAxis, yScale, zoom,
         resizeRectMargin = 15;
 
@@ -17,9 +18,8 @@ var ganttChart = function(conf) {
         enabvarooltip: enableTooltip,
         enableZoom: enableZoom,
         attachEvent: attachEvent,
-        chart: function() { return main },
-        // drag: function() { return drag },
         items: items,
+        addLanes: addLanes,
         lanes: lanes,
         margin: margin,
         showLaneLabel: showLaneLabel,
@@ -28,10 +28,13 @@ var ganttChart = function(conf) {
         size: size,
         sublanes: sublanes,
         getItemsByLane: getItemsByLane,
-        svg: function() { return chart },
+        updateItems: updateItems,
         redraw: redraw,
-        renderTo: function() { return self.renderTo },
         resize: resize,
+        // drag: function() { return drag },
+        chart: function() { return main },
+        svg: function() { return chart },
+        renderTo: function() { return self.renderTo },
         xAxis: function() { return xAxis },
         xScale: function() { return xScale },
         yScale: function() { return yScale },
@@ -60,6 +63,7 @@ var ganttChart = function(conf) {
     self.startDrag = [];
     self.moveDrag = [];
     self.endDrag = [];
+    self.doubleClick = [];
 
     self.height = null;
     self.width = null;
@@ -80,13 +84,14 @@ var ganttChart = function(conf) {
 
         if (self.height === null) self.height = parseInt(d3.select(self.renderTo).style('height')) || 480;
         if (self.width === null) self.width = parseInt(d3.select(self.renderTo).style('width')) || 640;
-
+        
+        
         build();
         autoresize(self.isAutoResize);
         enableDrag(self.isEnableDrag);
         enableTooltip(self.isEnableTooltip);
         enableZoom(self.isEnableZoom);
-        showLaneLabel(self.isEnableTooltip);
+        showLaneLabel(self.isShowLaneLabel);
         showXGrid(self.isShowXGrid);
         showYGrid(self.isShowYGrid);
         renderSublane();        
@@ -96,7 +101,15 @@ var ganttChart = function(conf) {
     function addItems(newItems) {
         var itemsType = toStr.call(newItems);
         if (itemsType !== astr && itemsType !== ostr) throwError('Expected object or array. Got: ' + itemsType);
-        (itemsType === astr) ? self.items = self.items.concat(newItems) : self.items.push(newItems);
+        if(itemsType === astr) {
+            checkRequireItemField(newItems);
+            self.items = self.items.concat(newItems);
+        }
+        else
+        {
+            requireItemField(newItems);
+            self.items.push(newItems);
+        } 
         onItemsChange();
         return api;
     }
@@ -119,6 +132,9 @@ var ganttChart = function(conf) {
             case "endDrag":
                 self.endDrag.push(callback);                
                 break;
+            case "doubleClick":
+                self.doubleClick.push(callback);                
+                break;
         }
         return api;
     }
@@ -127,6 +143,7 @@ var ganttChart = function(conf) {
         var laneLength = self.lanes.length,
             marginWidth = getMarginWidth(),
             marginHeight = getMarginHeight();
+            
         chart = d3.select(self.renderTo)
             .append("svg")
             .attr("width", self.width)
@@ -165,9 +182,6 @@ var ganttChart = function(conf) {
             .attr("height", marginHeight)
             .attr("class", "main");
 
-        itemRects = main.append("g")
-            .attr("clip-path", "url(#clip)");
-
         tooltipDiv = d3.select("body").append("div")
             .attr("class", "gantt-tooltip")
             .style("opacity", 0);
@@ -202,6 +216,9 @@ var ganttChart = function(conf) {
         main.append('g')
             .attr('class', 'main axis lane')
             .call(yAxis);
+        
+        itemRects = main.append("g")
+                        .attr("clip-path", "url(#clip)");
 
         main.append('g')
             .attr('class', 'laneLabels');
@@ -362,14 +379,14 @@ var ganttChart = function(conf) {
     }
 
     function enableZoom(isEnableZoom) {
-        if (!arguments.length) return self.isEnableZoom;
+        if (!arguments.length) return self.isEnableZoom;        
         zoom.on("zoom", (isEnableZoom) ? redraw : null);
         self.isEnableZoom = isEnableZoom;
         return api;
     }
 
     function getLaneLength() {
-        return (d3.max(self.items, function(d) { return d.lane }) + 1) || 0;
+        return self.lanes.length; //(d3.max(self.items, function(d) { return d.lane }) + 1) || 0;
     }
 
     function getMarginWidth() {
@@ -398,9 +415,13 @@ var ganttChart = function(conf) {
         var itemsType = toStr.call(newItems);
 
         if (!arguments.length) return self.items;
-        if (itemsType !== astr) throwError('Expected array. Got: ' + itemsType);
-        self.items = newItems;
 
+        if (itemsType !== astr) throwError('Expected array. Got: ' + itemsType);
+
+        checkRequireItemField(newItems);
+
+        self.items = newItems;
+        
         onItemsChange();
         return api;
     }
@@ -412,7 +433,16 @@ var ganttChart = function(conf) {
         self.lanes = newLanes;
         self.lanes.length = getLaneLength() || self.lanes.length;
         showLaneLabel(!self.isShowLaneLabel);
-        // showLaneLabel(!self.isShowLaneLabel);
+        showLaneLabel(!self.isShowLaneLabel);
+        return api;
+    }
+
+    function addLanes(newLane) {
+        var laneType = toStr.call(newLane);
+        if (!arguments.length) return self.lanes;
+        if (laneType !== sstr) throwError('Expected String. Got: ' + laneType);
+        self.lanes.push(newLane);
+        onLanesChange();
         return api;
     }
 
@@ -442,6 +472,18 @@ var ganttChart = function(conf) {
         return api;
     }
 
+    function onLanesChange() {
+        var laneLength = getLaneLength();
+        xScale.domain(getTimeDomain());
+        yAxis.ticks(laneLength);
+        yScale.domain([0, laneLength]);
+        zoom.x(xScale);
+        showLaneLabel(!self.isShowLaneLabel);
+        showLaneLabel(!self.isShowLaneLabel);
+        renderSublane();
+        redraw();
+    }
+
     function onItemsChange() {
         var laneLength = getLaneLength();
         self.lanes.length = laneLength;
@@ -451,6 +493,8 @@ var ganttChart = function(conf) {
         zoom.x(xScale);
         redraw();
         redraw();
+        renderSublane();        
+        
     }
 
     function redraw() {
@@ -461,13 +505,21 @@ var ganttChart = function(conf) {
             .attr("id", function(d) { return d.id })
             .attr("x", function (d) { return xScale(d.start); })
             .attr("y", function (d) {
+                if(d.lane > (self.lanes.length - 1)) {
+                    d.lane = self.lanes.length - 1;
+                }
                 return (self.sublanes < 2) ? yScale(d.lane) : yScale(d.lane) + d.sublane*self.itemHeight;
             })
             .attr("width", function (d) { return xScale(d.end) - xScale(d.start); })
             .attr("height", self.itemHeight)
             .attr("class", function (d) { return d.class ===  undefined ? 'success' : d.class; })
-            // .attr("opacity", .75)
             .call(drag)
+            .on("dblclick", function(d) {
+                for(var i = 0; i < self.endDrag.length; i++) {
+                    self.doubleClick[i](this, d);
+                }
+                d3.event.stopPropagation();
+            })
             .on("mouseover", (self.isEnableTooltip) ? showTooltip : null)
             .on("mouseleave", (self.isEnableTooltip) ? hideTooltip : null)
             .on("mousemove", changeCursor);
@@ -483,13 +535,15 @@ var ganttChart = function(conf) {
             .attr("id", function(d) { return "text-" + d.id })
             .attr("x", function(d) { return xScale(d.start) + (xScale(d.end) - xScale(d.start)) / 2; })
             .attr("y",function (d) {
-                return (self.sublanes < 2) ? yScale(d.lane) + self.itemHeight/2 : yScale(d.lane) + d.sublane*self.itemHeight + self.itemHeight/2;
+                if(d.lane > (self.lanes.length - 1)) {
+                    d.lane = self.lanes.length - 1;
+                }
+                return (self.sublanes < 2) ? yScale(d.lane) + self.itemHeight/2 : yScale(d.lane) +  d.sublane*self.itemHeight + self.itemHeight/2;
             })
             .attr("font-size", 11)
             .attr("text-anchor", "middle")
             .attr("text-height", 20)
-            .attr("fill", function (d) { return d.fillTitle === undefined ? '#fff' + ' main' : d.fillTitle + ' main'; })
-            // .attr("fill", "#fff");
+            .attr("fill", function (d) { return d.fillTitle === undefined ? '#fff' + ' main' : d.fillTitle + ' main'; });
 
         texts.enter().append("text");
         texts.exit().remove();
@@ -536,10 +590,11 @@ var ganttChart = function(conf) {
     function showLaneLabel(isShowLaneLabel) {
         if (!arguments.length) return self.isShowLaneLabel;
         self.isShowLaneLabel = isShowLaneLabel;
+        
         if (isShowLaneLabel === false) {
             main.selectAll(".laneText").remove();
         }
-        else {
+        else {   
             main.select('g.laneLabels').selectAll(".laneText")
                 .data(self.lanes)
                 .enter().append("text")
@@ -555,6 +610,18 @@ var ganttChart = function(conf) {
         return api;
     }
 
+    function updateItems(newItem) {
+        requireItemField(newItem, "update");
+        
+        var oldItem = self.items.filter(function(obj){ return obj.id === newItem.id})[0];
+
+        if(oldItem === undefined) throwError("This item not found")
+
+        copySameProp(oldItem, newItem);
+        
+        onItemsChange();
+    }
+
     function showTooltip(d) {
         if (d3.event.defaultPrevented) return;
         tooltipDiv.style("display", "block")
@@ -564,17 +631,6 @@ var ganttChart = function(conf) {
         tooltipDiv.html((typeof d.tooltip === 'function') ? d.tooltip() : d.tooltip)
             .style("left", (d3.event.pageX) + "px")
             .style("top", (d3.event.pageY) + "px");
-    }
-
-    function renderSublane() {
-        
-        separateSublane();
-
-        var max = getMaxSubLane();
-        
-        size(self.width,  max.max*self.itemHeight*self.lanes.length + self.margin.top + self.margin.bottom);
-        
-        self.sublanes = max.max;
     }
 
     function showXGrid(isShowXGrid) {
@@ -611,32 +667,13 @@ var ganttChart = function(conf) {
         return api;
     }
 
-    // function getItemHeight() {
-    //     return getMarginHeight() / (self.lanes.length || 1) / (self.sublanes || 1);
-    // }
-
     function getItemsByLane(lane) {
         return self.items.filter(function(item) {
             return item.lane == lane;
         })
     }
 
-    function separateSublane() {
-        for(var l = 0; l < self.lanes.length; l++) {
-            var itemLanes = self.items.filter(function(obj) {
-                return obj.lane == l;
-            });
-            for(var i = 0; i < itemLanes.length; i++) {
-                var item = itemLanes[i];
-                var itemChange = self.items.find(
-                    function(obj){ return obj.id === item.id}
-                );
-                itemChange.sublane = i;
-            }
-        }        
-    }
-
-    function getMaxSubLane() {
+    function getMaxSublane() {
         var maxSublane = {
             max: 0,
             lanes: []
@@ -659,6 +696,61 @@ var ganttChart = function(conf) {
         return maxSublane;
     }
 
+    //#region Private method
+
+    function checkRequireItemField(items) {
+        for(var i = 0; i < items.length; i++) {
+            var item = items[i];
+            requireItemField(item);
+        }
+    }
+
+    function requireItemField(item, type) {
+        if(type !== 'update') {
+            if(item.sublane === undefined) { item.sublane = 0; }
+            if(item.class === undefined) { item.class = 'success'; }
+        }
+
+        var startDate = new Date(item.start);
+        var endDate = new Date(item.end);
+        var ids = self.items.filter(function(obj){ return obj.id === item.id});
+
+        if(item.id === undefined)  throwError('Id required')
+        if(item.lane === undefined) throwError('Lane required')
+        if(ids.length > 1) throwError('Id: ' + ids[0].id + ' expected unique')
+        if(!(startDate instanceof Date && !isNaN(startDate))) throwError('Start date expected Date')
+        if(!(endDate instanceof Date && !isNaN(endDate))) throwError('End date expected Date')
+    }
+
+    function renderSublane() {
+        
+        separateSublane();
+
+        var max = getMaxSublane();
+        
+        size(self.width,  max.max*self.itemHeight*self.lanes.length + self.margin.top + self.margin.bottom);
+        
+        sublanes(max.max);
+    }
+    
+    function separateSublane() {
+        for(var l = 0; l < self.lanes.length; l++) {
+            var itemLanes = self.items.filter(function(obj) {
+                return obj.lane == l;
+            });
+            
+            for(var i = 0; i < itemLanes.length; i++) {
+                var item = itemLanes[i];
+                var itemChange = self.items.find(
+                    function(obj){ return obj.id === item.id}
+                );
+                itemChange.sublane = i;
+            }
+        }        
+    }
+
+
+    //#endregion
     function throwError(msg) {
         throw TypeError(msg);
     }
